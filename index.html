@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JSON ↔ CSV</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      font-family: system-ui, sans-serif;
+      background: #f5f5f5;
+      color: #222;
+    }
+
+    .app {
+      width: min(900px, 100%);
+    }
+
+    h1 {
+      margin: 0 0 24px;
+      font-size: 24px;
+      text-align: center;
+    }
+
+    .panels {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    .panel {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 20px;
+    }
+
+    h2 {
+      margin: 0 0 6px;
+      font-size: 18px;
+    }
+
+    .description {
+      margin: 0 0 18px;
+      color: #777;
+      font-size: 13px;
+    }
+
+    .drop-zone {
+      min-height: 180px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: 2px dashed #ccc;
+      border-radius: 8px;
+      cursor: pointer;
+      text-align: center;
+      transition: .15s;
+    }
+
+    .drop-zone:hover,
+    .drop-zone.dragover {
+      border-color: #555;
+      background: #fafafa;
+    }
+
+    .drop-zone strong {
+      font-size: 14px;
+    }
+
+    .drop-zone span {
+      color: #888;
+      font-size: 12px;
+    }
+
+    .drop-zone input {
+      display: none;
+    }
+
+    .file-name {
+      min-height: 20px;
+      margin: 12px 0;
+      font-size: 13px;
+      color: #555;
+      text-align: center;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .buttons {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    button {
+      padding: 10px 14px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      background: #fff;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #f0f0f0;
+    }
+
+    button.primary {
+      background: #222;
+      color: #fff;
+      border-color: #222;
+    }
+
+    button.primary:hover {
+      background: #000;
+    }
+
+    button:disabled {
+      opacity: .4;
+      cursor: not-allowed;
+    }
+
+    .status {
+      min-height: 18px;
+      margin-top: 12px;
+      font-size: 12px;
+      text-align: center;
+    }
+
+    .error {
+      color: #b00020;
+    }
+
+    .success {
+      color: #267326;
+    }
+
+    @media (max-width: 700px) {
+      .panels {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="app">
+
+  <h1>JSON ↔ CSV</h1>
+
+  <div class="panels">
+
+    <section class="panel">
+      <h2>JSON → CSV</h2>
+      <p class="description">
+        Convert a key/value JSON file to CSV.
+      </p>
+
+      <div class="drop-zone" id="jsonDrop">
+        <strong>Drop JSON file here</strong>
+        <span>or click to select</span>
+
+        <input
+          id="jsonFile"
+          type="file"
+          accept=".json,application/json"
+        >
+      </div>
+
+      <div class="file-name" id="jsonFileName">
+        No file selected
+      </div>
+
+      <div class="buttons">
+        <button class="primary" id="jsonConvert" disabled>
+          Convert
+        </button>
+
+        <button id="jsonDownload" disabled>
+          Download CSV
+        </button>
+      </div>
+
+      <div class="status" id="jsonStatus"></div>
+    </section>
+
+
+    <section class="panel">
+      <h2>CSV → JSON</h2>
+      <p class="description">
+        Convert a key/value CSV file to JSON.
+      </p>
+
+      <div class="drop-zone" id="csvDrop">
+        <strong>Drop CSV file here</strong>
+        <span>or click to select</span>
+
+        <input
+          id="csvFile"
+          type="file"
+          accept=".csv,text/csv"
+        >
+      </div>
+
+      <div class="file-name" id="csvFileName">
+        No file selected
+      </div>
+
+      <div class="buttons">
+        <button class="primary" id="csvConvert" disabled>
+          Convert
+        </button>
+
+        <button id="csvDownload" disabled>
+          Download JSON
+        </button>
+      </div>
+
+      <div class="status" id="csvStatus"></div>
+    </section>
+
+  </div>
+
+</div>
+
+
+<script>
+"use strict";
+
+
+let jsonText = null;
+let csvResult = null;
+
+let csvText = null;
+let jsonResult = null;
+
+
+/*
+ * CSV escaping.
+ *
+ * IMPORTANT:
+ * This does not modify \n.
+ * If the string contains the two characters "\" and "n",
+ * they remain "\" and "n".
+ */
+function csvEscape(value) {
+  value = String(value);
+
+  if (
+    value.includes(",") ||
+    value.includes('"') ||
+    value.includes("\r") ||
+    value.includes("\n")
+  ) {
+    return '"' + value.replace(/"/g, '""') + '"';
+  }
+
+  return value;
+}
+
+
+/*
+ * JSON → CSV
+ *
+ * We intentionally do NOT JSON.parse() the values and then
+ * stringify them.
+ *
+ * Instead, we extract the JSON string value directly from
+ * the parsed JSON object using JSON.parse, then JSON.stringify
+ * the resulting value when necessary.
+ *
+ * JSON.parse:
+ *
+ *   "\\n" in the source JSON
+ *          ↓
+ *   actual newline in JS
+ *
+ * JSON.stringify:
+ *
+ *   actual newline in JS
+ *          ↓
+ *   "\\n"
+ *
+ * That gives the CSV the literal characters \ and n.
+ */
+function jsonToCsv(source) {
+
+  const data = JSON.parse(source);
+
+  if (
+    data === null ||
+    Array.isArray(data) ||
+    typeof data !== "object"
+  ) {
+    throw new Error(
+      "JSON must contain an object of key/value pairs."
+    );
+  }
+
+  const rows = [
+    ["key", "value"]
+  ];
+
+  for (const [key, value] of Object.entries(data)) {
+
+    let csvValue;
+
+    if (typeof value === "string") {
+
+      /*
+       * JSON.stringify is important here.
+       *
+       * Example:
+       *
+       * JS string:
+       *   hello
+       *   world
+       *
+       * JSON.stringify:
+       *   "hello\nworld"
+       *
+       * After removing the surrounding quotes:
+       *   hello\nworld
+       */
+      csvValue = JSON.stringify(value).slice(1, -1);
+
+    } else if (value === null) {
+
+      csvValue = "";
+
+    } else {
+
+      /*
+       * Preserve non-string JSON values as JSON text.
+       */
+      csvValue = JSON.stringify(value);
+    }
+
+    rows.push([
+      key,
+      csvValue
+    ]);
+  }
+
+  return rows
+    .map(row => row.map(csvEscape).join(","))
+    .join("\r\n");
+}
+
+
+/*
+ * CSV parser.
+ *
+ * Supports quoted CSV fields, commas inside quotes,
+ * escaped quotes, and actual CSV line breaks.
+ *
+ * A literal \n inside a CSV value is NOT changed.
+ */
+function parseCsv(text) {
+
+  const rows = [];
+
+  let row = [];
+  let field = "";
+  let quoted = false;
+
+  for (let i = 0; i < text.length; i++) {
+
+    const char = text[i];
+
+    if (quoted) {
+
+      if (char === '"') {
+
+        if (text[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          quoted = false;
+        }
+
+      } else {
+
+        field += char;
+      }
+
+      continue;
+    }
+
+    if (char === '"') {
+
+      quoted = true;
+
+    } else if (char === ",") {
+
+      row.push(field);
+      field = "";
+
+    } else if (char === "\n") {
+
+      row.push(field);
+      rows.push(row);
+
+      row = [];
+      field = "";
+
+    } else if (char === "\r") {
+
+      // Ignore CR.
+
+    } else {
+
+      field += char;
+    }
+  }
+
+  if (quoted) {
+    throw new Error(
+      "CSV contains an unterminated quoted field."
+    );
+  }
+
+  if (field !== "" || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+
+/*
+ * CSV → JSON
+ *
+ * CSV contains literal:
+ *
+ *   \n
+ *
+ * We need to interpret that as a JSON escape sequence,
+ * not as an actual newline in the CSV file.
+ *
+ * JSON.parse('"' + value + '"') handles JSON escapes
+ * correctly.
+ */
+function decodeJsonString(value) {
+
+  try {
+
+    return JSON.parse(
+      '"' +
+      value
+        .replace(/\\/g, "\\\\")
+        .replace(/"/g, '\\"') +
+      '"'
+    );
+
+  } catch {
+
+    return value;
+  }
+}
+
+
+function csvToJson(source) {
+
+  const rows = parseCsv(source);
+
+  if (!rows.length) {
+    throw new Error("CSV file is empty.");
+  }
+
+  const result = {};
+
+  let start = 0;
+
+  if (
+    rows[0].length >= 2 &&
+    rows[0][0].trim().toLowerCase() === "key" &&
+    rows[0][1].trim().toLowerCase() === "value"
+  ) {
+    start = 1;
+  }
+
+  for (let i = start; i < rows.length; i++) {
+
+    const row = rows[i];
+
+    if (
+      !row.length ||
+      row.every(value => value === "")
+    ) {
+      continue;
+    }
+
+    if (row.length < 2) {
+      throw new Error(
+        `Invalid CSV row ${i + 1}. Expected key,value.`
+      );
+    }
+
+    const key = row[0];
+
+    if (!key) {
+      continue;
+    }
+
+    const value = row.slice(1).join(",");
+
+    /*
+     * Convert JSON escape sequences in the CSV value
+     * back into the corresponding JS string.
+     *
+     * Literal \n -> actual newline in JS.
+     *
+     * JSON.stringify below then writes it back out as \n.
+     */
+    result[key] = decodeJsonString(value);
+  }
+
+  return JSON.stringify(result, null, 2);
+}
+
+
+/*
+ * Download
+ */
+function download(content, filename, type) {
+
+  const blob = new Blob(
+    [content],
+    { type }
+  );
+
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = filename;
+
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  URL.revokeObjectURL(url);
+}
+
+
+/*
+ * JSON file handling
+ */
+
+const jsonFile = document.getElementById("jsonFile");
+const jsonDrop = document.getElementById("jsonDrop");
+const jsonConvert = document.getElementById("jsonConvert");
+const jsonDownload = document.getElementById("jsonDownload");
+const jsonFileName = document.getElementById("jsonFileName");
+const jsonStatus = document.getElementById("jsonStatus");
+
+
+jsonFile.addEventListener("change", () => {
+
+  const file = jsonFile.files[0];
+
+  if (!file) return;
+
+  jsonFileName.textContent = file.name;
+
+  const reader = new FileReader();
+
+  reader.onload = () => {
+
+    try {
+
+      /*
+       * Validate the JSON now, but keep the ORIGINAL
+       * source text for conversion.
+       */
+      JSON.parse(reader.result);
+
+      jsonText = reader.result;
+      csvResult = null;
+
+      jsonConvert.disabled = false;
+      jsonDownload.disabled = true;
+
+      jsonStatus.textContent = "Ready to convert.";
+      jsonStatus.className = "status success";
+
+    } catch {
+
+      jsonText = null;
+
+      jsonConvert.disabled = true;
+      jsonDownload.disabled = true;
+
+      jsonStatus.textContent = "Invalid JSON file.";
+      jsonStatus.className = "status error";
+    }
+  };
+
+  reader.readAsText(file);
+});
+
+
+jsonConvert.addEventListener("click", () => {
+
+  try {
+
+    csvResult = jsonToCsv(jsonText);
+
+    jsonDownload.disabled = false;
+
+    jsonStatus.textContent = "Converted successfully.";
+    jsonStatus.className = "status success";
+
+  } catch (error) {
+
+    csvResult = null;
+    jsonDownload.disabled = true;
+
+    jsonStatus.textContent = error.message;
+    jsonStatus.className = "status error";
+  }
+});
+
+function getTimecode() {
+  const now = new Date();
+
+  const pad = n => String(n).padStart(2, "0");
+
+  return [
+    now.getFullYear(),
+    pad(now.getMonth() + 1),
+    pad(now.getDate())
+  ].join("-") + "_" + [
+    pad(now.getHours()),
+    pad(now.getMinutes()),
+    pad(now.getSeconds())
+  ].join("-");
+}
+
+jsonDownload.addEventListener("click", () => {
+  if (!csvResult) return;
+
+  const baseName = jsonFile.files[0].name
+    .replace(/\.json$/i, "");
+
+  download(
+    csvResult,
+    `${baseName}_${getTimecode()}.csv`,
+    "text/csv;charset=utf-8"
+  );
+});
+
+
+/*
+ * CSV file handling
+ */
+
+const csvFile = document.getElementById("csvFile");
+const csvDrop = document.getElementById("csvDrop");
+const csvConvert = document.getElementById("csvConvert");
+const csvDownload = document.getElementById("csvDownload");
+const csvFileName = document.getElementById("csvFileName");
+const csvStatus = document.getElementById("csvStatus");
+
+
+csvFile.addEventListener("change", () => {
+
+  const file = csvFile.files[0];
+
+  if (!file) return;
+
+  csvFileName.textContent = file.name;
+
+  const reader = new FileReader();
+
+  reader.onload = () => {
+
+    csvText = reader.result;
+    jsonResult = null;
+
+    csvConvert.disabled = false;
+    csvDownload.disabled = true;
+
+    csvStatus.textContent = "Ready to convert.";
+    csvStatus.className = "status success";
+  };
+
+  reader.readAsText(file);
+});
+
+
+csvConvert.addEventListener("click", () => {
+
+  try {
+
+    jsonResult = csvToJson(csvText);
+
+    csvDownload.disabled = false;
+
+    csvStatus.textContent = "Converted successfully.";
+    csvStatus.className = "status success";
+
+  } catch (error) {
+
+    jsonResult = null;
+    csvDownload.disabled = true;
+
+    csvStatus.textContent = error.message;
+    csvStatus.className = "status error";
+  }
+});
+
+
+csvDownload.addEventListener("click", () => {
+  if (!jsonResult) return;
+
+  const baseName = csvFile.files[0].name
+    .replace(/\.csv$/i, "");
+
+  download(
+    jsonResult,
+    `${baseName}_${getTimecode()}.json`,
+    "application/json;charset=utf-8"
+  );
+});
+
+
+/*
+ * Drag and drop
+ */
+
+function setupDropZone(dropZone, fileInput) {
+
+  dropZone.addEventListener("click", () => {
+    fileInput.click();
+  });
+
+  dropZone.addEventListener("dragover", event => {
+
+    event.preventDefault();
+
+    dropZone.classList.add("dragover");
+  });
+
+  dropZone.addEventListener("dragleave", () => {
+
+    dropZone.classList.remove("dragover");
+  });
+
+  dropZone.addEventListener("drop", event => {
+
+    event.preventDefault();
+
+    dropZone.classList.remove("dragover");
+
+    const file = event.dataTransfer.files[0];
+
+    if (!file) return;
+
+    const transfer = new DataTransfer();
+
+    transfer.items.add(file);
+
+    fileInput.files = transfer.files;
+
+    fileInput.dispatchEvent(
+      new Event("change")
+    );
+  });
+}
+
+
+setupDropZone(jsonDrop, jsonFile);
+setupDropZone(csvDrop, csvFile);
+
+</script>
+
+</body>
+</html>
